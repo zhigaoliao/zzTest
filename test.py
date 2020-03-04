@@ -3,63 +3,98 @@ import urllib.parse
 import re
 import json
 import time
+from bs4 import BeautifulSoup
+import lxml
 import pymysql
+import jsonpath
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
 
 def get_one_page(url):
     response = urllib.request.Request(url)
     r = urllib.request.urlopen(response)
     return r.read().decode('utf-8')
 
-def parse_one_page(html):
-    pattern =re.compile(
-        '<dd>.*?board-index.*?>(.*?)</i>.*?data-src="(.*?)".*?name.*?a.*?>(.*?)</a>.*?star.*?>(.*?)</p>.*?releasetime.*?>(.*?)</p>.*?integer.*?>(.*?)</i>.*?fraction.*?>(.*?)</i>.*?</dd>',
-        re.S)
-    items = re.findall(pattern,html)
-    for item in items:
-        yield ({
-            'index': item[0],
-            'image': item[1],
-            'title': item[2].strip(),
-            'actor': item[3].strip()[3:] if len(item[3]) > 3 else '',
-            'time':  item[4].strip()[5:] if len(item[4]) > 5 else '',
-            'score': item[5].strip() + item[6].strip()})
+def main():
+    bcode=('195234','195534')
 
-# def write_to_json(content):
-#     with open('result.txt', 'ab') as f:
-#         # print(type(json.dumps(content)))
-#         f.write(json.dumps(content, ensure_ascii=False,).encode('utf-8'))
-#         # f.write('\n')
+    for we in bcode:
 
-def main(offset):
-    url = 'http://maoyan.com/board/4?offset=' + str(offset)
-    html = get_one_page(url)
-    # aa = parse_one_page(html)
-    # print(aa)
-    for item in parse_one_page(html):
-         print(item)
-         db = pymysql.connect(host='10.9.25.100', user='ihr_1plus', password='!@IHR4rfvbhu8', port=3307,
-                             db='ihr_sit_1plus', charset='utf8')
-         cursor = db.cursor()
-         cursor.execute('select version()')
-         # data = cursor.fetchone()
-         # print('version:',data)
-         table = 'pytest'
-         keys = ', '.join(item.keys())
-         print(keys)
-         values = ', '.join(['%s'] * len(item))
-         print(item.values())
-         sql = 'INSERT INTO {table} VALUES ({values})'.format(table=table, keys=keys, values=values)
-         try:
-             if cursor.execute(sql, tuple(item.values())):
-                 print('Successful')
-                 db.commit()
-         except:
-             print('Failed')
-             db.rollback()
-         db.close()
-        # write_to_json(item)
+        db = pymysql.connect(host='localhost', user='root', password='lzg123lzg', port=3306,
+                             db='mysql', charset='utf8')
+        cursor = db.cursor()
+        cursor.execute('select version()')
+        sql3 = 'select roomno from buildcode where buildno=%s'
+        cursor.execute(sql3,we)
+        wqq=cursor.fetchall()
+        for ds in wqq:
+            qs=ds[0]
+            url = 'https://fsfc.fszj.foshan.gov.cn/hpms_project/roomview.jhtml?id='+qs+'&xmmc='
+            html = get_one_page(url)
+            soup = BeautifulSoup(html, 'lxml')
+            # 房间地址
+            roomdr = soup.find(text = re.compile('栋'))
+            rdrr = ""
+            rdrr = rdrr.join(roomdr)
+            print(rdrr)
 
-if __name__ == '__main__':
-    for i in range(10):
-        main(offset=i * 10)
-        time.sleep(2)
+            # 面积
+            area = soup.find(text = re.compile('[0-9][0-9]{1,3}\.\d+'))
+            sdw1 = ""
+            sdw1 = sdw1.join(area)
+            areaq = float(sdw1)
+
+            # 获取状态
+            rstatus1 = soup.find(text = re.compile('预订'))
+            rstatus2 = soup.find(text = re.compile('可售'))
+            if (rstatus1 is not None):
+                rst = "限制房产"
+            elif (rstatus2 is not None):
+                rst = "可售"
+            else:
+                rst = 0
+
+            # 预订和可售状态才获取价格
+            if (rst != 0):
+                roomprice = soup.table.find_all(text = re.compile('[0-9]\d{6}(?!\d)'))[0]
+                sdw = ""
+                sdw = sdw.join(roomprice)
+                ww = int(sdw)
+                npr = int(ww / int(areaq))
+
+            # 获取当前时间
+            timew = time.strftime("%Y-%m-%d", time.localtime())
+
+            # 数据写入mysql
+            if (rst != 0 ):
+                db = pymysql.connect(host = 'localhost', user = 'root', password = 'lzg123lzg', port = 3306,
+                                     db = 'mysql', charset = 'utf8')
+                cursor = db.cursor()
+                cursor.execute('select version()')
+                sql1 = 'select price from pricelist where name=(%s)'
+                if cursor.execute(sql1, (rdrr)):
+                        print("已经有数据了")
+                        eq1=cursor.fetchone()[0]
+                        if ww != int(eq1):
+                            print("要更新价格")
+                            sql2 = 'update pricelist set status=%s,price=%s,nprice=%s,time=%s where pricelist.name=%s'
+                            cursor.execute(sql2, (rst, ww, npr, timew,rdrr))
+                            db.commit()
+                        else:
+                            db.close()
+                            print("不用更新价格")
+                else:
+                    sql = 'INSERT INTO pricelist (name,area,price,time,status,nprice,roomcode) values (%s,%s,%s,%s,%s,%s,%s)'
+                    try:
+                        cursor.execute(sql, (rdrr, areaq, ww, timew, rst, npr, qs))
+                        print("插入成功")
+                        db.commit()
+                    except:
+                        print('Failed')
+                        db.rollback()
+                        db.close()
+            else:
+                print("have nothing")
+
+
+main()
