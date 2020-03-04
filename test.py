@@ -16,7 +16,7 @@ def get_one_page(url):
     return r.read().decode('utf-8')
 
 def main():
-    bcode=('195234','195534')
+    bcode=('195234','1955341')
 
     for we in bcode:
 
